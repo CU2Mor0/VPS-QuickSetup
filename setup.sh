@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # VPS-QuickSetup - 模块加载及启动入口 (Debian / Ubuntu)
-# 用法: bash <(curl -fsSL https://raw.githubusercontent.com/gnafehefang/VPS-QuickSetup/main/setup.sh)
+# 用法: bash <(curl -fsSL https://raw.githubusercontent.com/CU2Mor0/VPS-QuickSetup/main/setup.sh)
 set -o pipefail
 
 quicksetup_load_modules() {
@@ -69,7 +69,7 @@ quicksetup_download() (
   trap 'rm -rf -- "$dir"' EXIT
   # 从同一个归档启动入口及全部模块, 不逐个读取浮动分支。
   if ! curl -fsSL --connect-timeout 10 --max-time 120 \
-      https://github.com/gnafehefang/VPS-QuickSetup/archive/refs/heads/main.tar.gz -o "$dir/repository.tar.gz"; then
+      https://github.com/CU2Mor0/VPS-QuickSetup/archive/refs/heads/main.tar.gz -o "$dir/repository.tar.gz"; then
     printf '[错误] 下载完整脚本包失败, 未运行任何配置步骤\n' >&2
     return 1
   fi

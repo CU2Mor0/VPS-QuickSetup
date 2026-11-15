@@ -42,7 +42,7 @@ make_bootstrap_fixture() {
       esac
       shift
     done
-    [[ "$url" == https://github.com/gnafehefang/VPS-QuickSetup/archive/refs/heads/main.tar.gz && -n "$output" ]] || return 99
+    [[ "$url" == https://github.com/CU2Mor0/VPS-QuickSetup/archive/refs/heads/main.tar.gz && -n "$output" ]] || return 99
     printf '%s\n' "$url" >>"$BOOTSTRAP_DOWNLOAD_LOG"
     if [[ "$BOOTSTRAP_CURL_FAIL" == yes ]]; then
       printf 'partial download\n' >"$output"

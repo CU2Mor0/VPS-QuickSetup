@@ -2,6 +2,33 @@
 # 由 setup.sh 统一加载, 保持各步骤共享本轮状态。
 
 # ---------- 2. 时区 + 自动校时 ----------
+valid_timezone() {
+  local tz="$1"
+  [[ "$tz" =~ ^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$ ]] \
+    && [[ -f "$ZONEINFO_DIR/$tz" ]]
+}
+
+json_string() { # json_string key json
+  printf '%s' "$2" |
+    sed -n 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+    head -n 1
+}
+
+detect_timezone_from_ip() {
+  local url json tz
+  command -v curl >/dev/null 2>&1 || return 1
+  for url in "https://ipapi.co/json/" "https://ipinfo.io/json"; do
+    json=$(curl -fsSL --connect-timeout 5 --max-time 10 -A VPS-QuickSetup "$url" 2>/dev/null) \
+      || continue
+    tz=$(json_string timezone "$json")
+    if valid_timezone "$tz"; then
+      printf '%s\n' "$tz"
+      return 0
+    fi
+  done
+  return 1
+}
+
 ntp_value() { # 只接受成功读取的布尔值, 不把失败输出或空值当作状态。
   local value
   value=$(timedatectl show -p "$1" --value 2>/dev/null) || return 1
@@ -37,10 +64,20 @@ ensure_ntp() {
 }
 
 step_tz() {
-  local cur; cur=$(timedatectl show -p Timezone --value 2>/dev/null || cat "$TIMEZONE_FILE" 2>/dev/null)
+  local cur tz
+  cur=$(timedatectl show -p Timezone --value 2>/dev/null || cat "$TIMEZONE_FILE" 2>/dev/null)
   info "当前时区: ${cur:-未知}"
-  ask "时区" "$DEFAULT_TZ"; local tz="$REPLY"
-  [[ -f "$ZONEINFO_DIR/$tz" ]] || { err "无效时区: $tz"; return 1; }
+  if [[ -n "${QUICKSETUP_TZ:-}" ]]; then
+    tz="$QUICKSETUP_TZ"
+    valid_timezone "$tz" || { err "QUICKSETUP_TZ 不是有效时区: $tz"; return 1; }
+    info "使用 QUICKSETUP_TZ 指定时区: $tz"
+  elif tz=$(detect_timezone_from_ip); then
+    info "已根据公网 IP 归属地自动识别时区: $tz"
+  else
+    warn "无法根据公网 IP 自动识别时区, 改为手动输入"
+    ask "时区" "$DEFAULT_TZ"; tz="$REPLY"
+  fi
+  valid_timezone "$tz" || { err "无效时区: $tz"; return 1; }
   if [[ "$cur" == "$tz" ]]; then
     skip "时区已是 $tz"
   elif timedatectl set-timezone "$tz" 2>/dev/null \

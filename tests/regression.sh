@@ -1247,7 +1247,7 @@ test_summary_command_errors_are_indented_in_their_sections() (
 
 test_timezone_default_and_menu_match() (
   [[ "$DEFAULT_TZ" == Asia/Singapore ]] \
-    && menu | grep -qF '设置时区 + 自动校时 (默认 Asia/Singapore)'
+    && menu | grep -qF '设置时区 + 自动校时 (按公网 IP 归属地自动识别)'
 )
 
 test_timezone_enter_uses_default() (
@@ -1257,12 +1257,13 @@ test_timezone_enter_uses_default() (
   [[ "$REPLY" == Asia/Singapore ]]
 )
 
-test_timezone_step_uses_configured_default() (
+test_timezone_geolocation_failure_uses_manual_default() (
+  make_timezone_fixture || return 1
+  TIME_TEST_GEO_FAIL=yes
   DEFAULT_TZ=UTC
-  timedatectl() { printf 'UTC\n'; }
-  ask() { [[ "$1" == 时区 && "$2" == "$DEFAULT_TZ" ]]; exit "$?"; }
-  step_tz
-  return 1
+  TIME_TEST_INPUT=UTC
+  step_tz >"$TIME_TEST_OUTPUT" 2>&1 || return 1
+  grep -qxF 'set-timezone UTC' "$TIME_TEST_CALLS"
 )
 
 make_timezone_fixture() {
@@ -1284,6 +1285,10 @@ make_timezone_fixture() {
   TIME_TEST_NTP_SET_FAIL=no
   TIME_TEST_AFTER_ENABLE=yes
   TIME_TEST_AFTER_ENABLE_READ_FAIL=no
+  TIME_TEST_GEO_FAIL=no
+  TIME_TEST_GEO_JSON='{"ip":"203.0.113.10","timezone":"Asia/Singapore"}'
+  TIME_TEST_CURL_CALLS="$dir/curl_calls"
+  unset QUICKSETUP_TZ
   mkdir -p "$ZONEINFO_DIR/Asia" || return 1
   printf 'fixture Singapore\n' >"$ZONEINFO_DIR/Asia/Singapore"
   printf 'fixture UTC\n' >"$ZONEINFO_DIR/UTC"
@@ -1292,6 +1297,11 @@ make_timezone_fixture() {
   ok() { printf 'OK %s\n' "$*"; }
   skip() { printf 'SKIP %s\n' "$*"; }
   warn() { printf 'WARN %s\n' "$*"; }
+  curl() {
+    printf '%s\n' "$*" >>"$TIME_TEST_CURL_CALLS"
+    [[ "$TIME_TEST_GEO_FAIL" == no ]] || return 1
+    printf '%s\n' "$TIME_TEST_GEO_JSON"
+  }
   timedatectl() {
     printf '%s\n' "$*" >>"$TIME_TEST_CALLS"
     local value
@@ -1348,6 +1358,40 @@ test_timezone_change_also_enables_ntp() (
     && grep -qxF 'set-timezone Asia/Singapore' "$TIME_TEST_CALLS" \
     && grep -qxF 'set-ntp true' "$TIME_TEST_CALLS" \
     && grep -qxF 'OK 系统时钟已同步' "$TIME_TEST_OUTPUT"
+)
+
+test_timezone_autodetect_uses_ip_timezone() (
+  make_timezone_fixture || return 1
+  printf 'fixture Tokyo\n' >"$ZONEINFO_DIR/Asia/Tokyo"
+  TIME_TEST_GEO_JSON='{"ip":"203.0.113.10","timezone":"Asia/Tokyo"}'
+  step_tz >"$TIME_TEST_OUTPUT" 2>&1 || return 1
+  grep -qxF 'set-timezone Asia/Tokyo' "$TIME_TEST_CALLS" \
+    && grep -qF 'ipapi.co/json/' "$TIME_TEST_CURL_CALLS"
+)
+
+test_timezone_quicksetup_tz_override_skips_network() (
+  make_timezone_fixture || return 1
+  TIME_TEST_GEO_JSON='{"ip":"203.0.113.10","timezone":"Asia/Tokyo"}'
+  QUICKSETUP_TZ=UTC
+  step_tz >"$TIME_TEST_OUTPUT" 2>&1 || return 1
+  grep -qxF 'set-timezone UTC' "$TIME_TEST_CALLS" \
+    && [[ ! -s "$TIME_TEST_CURL_CALLS" ]]
+)
+
+test_timezone_invalid_quicksetup_tz_fails_before_network() (
+  make_timezone_fixture || return 1
+  QUICKSETUP_TZ=Invalid/Zone
+  if step_tz >"$TIME_TEST_OUTPUT" 2>&1; then return 1; fi
+  grep -qF 'QUICKSETUP_TZ 不是有效时区' "$TIME_TEST_OUTPUT" \
+    && [[ ! -s "$TIME_TEST_CURL_CALLS" ]]
+)
+
+test_timezone_invalid_ip_timezone_falls_back_to_manual_input() (
+  make_timezone_fixture || return 1
+  TIME_TEST_GEO_JSON='{"ip":"203.0.113.10","timezone":"Invalid/Zone"}'
+  TIME_TEST_INPUT=UTC
+  step_tz >"$TIME_TEST_OUTPUT" 2>&1 || return 1
+  grep -qxF 'set-timezone UTC' "$TIME_TEST_CALLS"
 )
 
 test_timezone_ntp_enabled_is_not_treated_as_synchronized() (
@@ -1434,6 +1478,7 @@ test_timezone_failed_initial_ntp_read_can_recover_after_enable() (
 
 test_timezone_invalid_zone_does_not_change_ntp() (
   make_timezone_fixture || return 1
+  TIME_TEST_GEO_FAIL=yes
   TIME_TEST_INPUT=Invalid/Zone
   if step_tz >"$TIME_TEST_OUTPUT" 2>&1; then return 1; fi
   grep -qF '无效时区' "$TIME_TEST_OUTPUT" \
@@ -1442,6 +1487,7 @@ test_timezone_invalid_zone_does_not_change_ntp() (
 
 test_timezone_fallback_failure_does_not_report_success_or_enable_ntp() (
   make_timezone_fixture || return 1
+  TIME_TEST_GEO_FAIL=yes
   TIME_TEST_INPUT=UTC
   TIME_TEST_ZONE_SET_FAIL=yes
   ln() { return 1; }
@@ -1454,6 +1500,7 @@ test_timezone_fallback_failure_does_not_report_success_or_enable_ntp() (
 
 test_timezone_fallback_success_still_checks_ntp() (
   make_timezone_fixture || return 1
+  TIME_TEST_GEO_FAIL=yes
   TIME_TEST_INPUT=UTC
   TIME_TEST_ZONE_SET_FAIL=yes
   step_tz >"$TIME_TEST_OUTPUT" 2>&1 || return 1
@@ -1683,7 +1730,7 @@ test_menu_displays_safe_order() (
   actual=$(menu | sed -n 's/^ *\([0-9][0-9]*\. .*\)$/\1/p')
   expected=$(printf '%s\n' \
     '1. 系统更新 + 基础工具' \
-    "2. 设置时区 + 自动校时 (默认 $DEFAULT_TZ)" \
+    '2. 设置时区 + 自动校时 (按公网 IP 归属地自动识别)' \
     '3. 添加公钥 (启用密钥登录)' \
     '4. 创建 admin 用户' \
     "5. 修改 SSH 端口 (默认随机 $SSH_RANDOM_PORT_MIN-$SSH_RANDOM_PORT_MAX)" \
